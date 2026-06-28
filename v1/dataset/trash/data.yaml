@@ -1,0 +1,12 @@
+path: D:/2026hackathon/dataset/trash
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: 一般垃圾
+  1: 塑膠
+  2: 紙類
+  3: 金屬
+  4: 玻璃
+  5: 廚餘

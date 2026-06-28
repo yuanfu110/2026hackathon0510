@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>垃圾資料標記</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, "Microsoft JhengHei", sans-serif;
+      background: #101214;
+      color: #f5f7fa;
+      text-align: center;
+    }
+
+    main {
+      width: min(720px, 100%);
+      margin: 0 auto;
+      padding: 18px 14px 28px;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 26px;
+      font-weight: 700;
+    }
+
+    video,
+    canvas {
+      width: 100%;
+      max-width: 560px;
+      aspect-ratio: 4 / 3;
+      border: 1px solid #2b3036;
+      border-radius: 8px;
+      background: #050607;
+      object-fit: cover;
+    }
+
+    canvas {
+      display: none;
+      margin-top: 12px;
+    }
+
+    .actions,
+    .labels {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button {
+      min-height: 44px;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      background: #1677ff;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+
+    .label-button {
+      min-width: 92px;
+    }
+
+    .label-white {
+      background: #ffffff;
+      color: #111827;
+      border: 1px solid #d1d5db;
+    }
+
+    .label-blue {
+      background: #2563eb;
+    }
+
+    .label-red {
+      background: #dc2626;
+    }
+
+    .label-yellow {
+      background: #facc15;
+      color: #111827;
+    }
+
+    .label-black {
+      background: #000000;
+      border: 1px solid #4b5563;
+    }
+
+    #message {
+      min-height: 28px;
+      margin: 14px 0 0;
+      color: #facc15;
+      white-space: pre-line;
+    }
+
+    #stats {
+      margin-top: 12px;
+      color: #aeb7c2;
+      line-height: 1.7;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>垃圾資料標記</h1>
+
+    <video id="camera" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <div class="actions">
+      <button id="openCameraButton" type="button">開啟相機</button>
+      <button id="captureButton" type="button" disabled>拍照</button>
+    </div>
+
+    <div class="labels">
+      {% for label_key, label in labels.items() %}
+        <button
+          class="label-button label-{{ label.color }}"
+          type="button"
+          data-label="{{ label_key }}"
+          disabled
+        >{{ label.name }}</button>
+      {% endfor %}
+    </div>
+
+    <p id="message">請先開啟相機</p>
+    <div id="stats"></div>
+  </main>
+
+  <script>
+    const video = document.getElementById("camera");
+    const canvas = document.getElementById("canvas");
+    const message = document.getElementById("message");
+    const stats = document.getElementById("stats");
+    const openCameraButton = document.getElementById("openCameraButton");
+    const captureButton = document.getElementById("captureButton");
+    const labelButtons = Array.from(document.querySelectorAll(".label-button"));
+
+    let capturedBlob = null;
+
+    function setLabelButtonsEnabled(enabled) {
+      labelButtons.forEach((button) => {
+        button.disabled = !enabled;
+      });
+    }
+
+    async function refreshStats() {
+      const response = await fetch("/api/stats");
+      const data = await response.json();
+
+      if (!data.success) {
+        return;
+      }
+
+      stats.textContent = Object.entries(data.counts)
+        .map(([label, count]) => `${label}: ${count}`)
+        .join("　");
+    }
+
+    async function openCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: false
+        });
+
+        video.srcObject = stream;
+        captureButton.disabled = false;
+        message.textContent = "相機已開啟，請按拍照";
+      } catch (error) {
+        message.textContent = "無法開啟相機，請確認瀏覽器權限與 HTTPS 設定";
+        console.error(error);
+      }
+    }
+
+    async function captureImage() {
+      if (!video.srcObject) {
+        message.textContent = "請先開啟相機";
+        return;
+      }
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      const context = canvas.getContext("2d");
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      capturedBlob = await new Promise((resolve) => {
+        canvas.toBlob(resolve, "image/jpeg", 0.92);
+      });
+
+      canvas.style.display = "inline-block";
+      setLabelButtonsEnabled(true);
+      message.textContent = "已拍照，請選一個標籤送出";
+    }
+
+    async function submitLabel(label) {
+      if (!capturedBlob) {
+        message.textContent = "請先拍照";
+        return;
+      }
+
+      setLabelButtonsEnabled(false);
+      message.textContent = "送出中...";
+
+      const formData = new FormData();
+      formData.append("label", label);
+      formData.append("image", capturedBlob, "capture.jpg");
+
+      try {
+        const response = await fetch("/api/label", {
+          method: "POST",
+          body: formData
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+          message.textContent = "儲存失敗：" + data.error;
+          setLabelButtonsEnabled(true);
+          return;
+        }
+
+        capturedBlob = null;
+        canvas.style.display = "none";
+        message.textContent = `已儲存：${data.label}\n${data.image_path}`;
+        await refreshStats();
+      } catch (error) {
+        message.textContent = "送出時發生錯誤";
+        setLabelButtonsEnabled(true);
+        console.error(error);
+      }
+    }
+
+    openCameraButton.addEventListener("click", openCamera);
+    captureButton.addEventListener("click", captureImage);
+    labelButtons.forEach((button) => {
+      button.addEventListener("click", () => submitLabel(button.dataset.label));
+    });
+
+    refreshStats();
+  </script>
+</body>
+</html>

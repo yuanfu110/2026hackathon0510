@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YOLO 自動偵測</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, "Microsoft JhengHei", sans-serif;
+      background: #111;
+      color: white;
+      text-align: center;
+    }
+
+    main {
+      width: min(640px, 100%);
+      margin: 0 auto;
+      padding: 18px 14px 30px;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 26px;
+    }
+
+    video,
+    canvas {
+      width: 100%;
+      max-width: 520px;
+      aspect-ratio: 4 / 3;
+      border-radius: 8px;
+      background: black;
+      object-fit: cover;
+    }
+
+    canvas {
+      display: none;
+    }
+
+    #toggleCamera {
+      min-width: 148px;
+      min-height: 48px;
+      margin: 14px 0 8px;
+      padding: 12px 20px;
+      font-size: 18px;
+      font-weight: 700;
+      border: 0;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+    }
+
+    #toggleCamera.off {
+      background: #30343a;
+      color: #b8c0cc;
+    }
+
+    #toggleCamera.on {
+      background: #16a34a;
+      color: #ffffff;
+    }
+
+    #result {
+      margin: 18px 0 0;
+      font-size: 20px;
+      color: #00ff99;
+      white-space: pre-line;
+    }
+
+    #msg {
+      min-height: 24px;
+      margin: 10px 0 0;
+      color: #ffcc00;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>YOLO 自動偵測</h1>
+
+    <video id="camera" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <br>
+
+    <button id="toggleCamera" class="off" type="button">開啟相機</button>
+
+    <p id="msg">相機未開啟</p>
+    <div id="result">尚未偵測</div>
+  </main>
+
+  <script>
+    const video = document.getElementById("camera");
+    const canvas = document.getElementById("canvas");
+    const toggleCameraButton = document.getElementById("toggleCamera");
+    const msg = document.getElementById("msg");
+    const resultBox = document.getElementById("result");
+
+    let stream = null;
+    let detectTimer = null;
+    let isDetecting = false;
+
+    function setButtonState(isOn) {
+      toggleCameraButton.textContent = isOn ? "關閉相機" : "開啟相機";
+      toggleCameraButton.classList.toggle("on", isOn);
+      toggleCameraButton.classList.toggle("off", !isOn);
+    }
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: false
+        });
+
+        video.srcObject = stream;
+        setButtonState(true);
+        msg.textContent = "相機已開啟，每 1 秒自動偵測";
+
+        await captureAndDetect();
+        detectTimer = window.setInterval(captureAndDetect, 1000);
+      } catch (error) {
+        msg.textContent = "無法開啟相機，請確認瀏覽器權限與 HTTPS 設定";
+        console.error(error);
+      }
+    }
+
+    function stopCamera() {
+      if (detectTimer) {
+        window.clearInterval(detectTimer);
+        detectTimer = null;
+      }
+
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+      }
+
+      video.srcObject = null;
+      setButtonState(false);
+      msg.textContent = "相機已關閉";
+    }
+
+    async function captureAndDetect() {
+      if (!stream || isDetecting || video.videoWidth === 0 || video.videoHeight === 0) {
+        return;
+      }
+
+      isDetecting = true;
+      resultBox.textContent = "偵測中...";
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      canvas.toBlob(async function(blob) {
+        const formData = new FormData();
+        formData.append("image", blob, "capture.jpg");
+
+        try {
+          const response = await fetch("/api/detect", {
+            method: "POST",
+            body: formData
+          });
+
+          const data = await response.json();
+
+          if (!data.success) {
+            resultBox.textContent = "偵測失敗：" + data.error;
+            return;
+          }
+
+          if (data.detections.length === 0) {
+            resultBox.textContent = data.message;
+            return;
+          }
+
+          const sampleText = data.sample && data.sample.data ? `\n輸出：${data.sample.data}` : "";
+          resultBox.textContent =
+            `主要結果：${data.main_result}\n信心分數：${data.confidence}${sampleText}`;
+        } catch (error) {
+          resultBox.textContent = "送出圖片或解析結果時發生錯誤";
+          console.error(error);
+        } finally {
+          isDetecting = false;
+        }
+      }, "image/jpeg", 0.9);
+    }
+
+    toggleCameraButton.addEventListener("click", () => {
+      if (stream) {
+        stopCamera();
+      } else {
+        startCamera();
+      }
+    });
+  </script>
+</body>
+</html>
