@@ -1,0 +1,13 @@
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/*.py[cod]
+
+**/uploads/
+**/runs/
+**/dataset/capture/
+**/dataset/**/*.cache
+**/best.pt
+
+.env
+.env.*
