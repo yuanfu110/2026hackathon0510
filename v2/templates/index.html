@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YOLO 自動偵測</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, "Microsoft JhengHei", sans-serif;
+      background: #111;
+      color: white;
+      text-align: center;
+    }
+
+    main {
+      width: min(640px, 100%);
+      margin: 0 auto;
+      padding: 18px 14px 30px;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 26px;
+    }
+
+    video,
+    canvas {
+      width: min(78vw, 500px);
+      max-width: 100%;
+      aspect-ratio: 3 / 5;
+      border-radius: 8px;
+      background: black;
+      clip-path: inset(0 0 0 100px);
+      object-fit: cover;
+    }
+
+    canvas {
+      display: none;
+    }
+
+    #toggleCamera {
+      min-width: 148px;
+      min-height: 48px;
+      margin: 14px 0 8px;
+      padding: 12px 20px;
+      font-size: 18px;
+      font-weight: 700;
+      border: 0;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+    }
+
+    #toggleCamera.off {
+      background: #30343a;
+      color: #b8c0cc;
+    }
+
+    #toggleCamera.on {
+      background: #16a34a;
+      color: #ffffff;
+    }
+
+    .camera-controls {
+      display: none;
+      width: min(78vw, 500px);
+      max-width: 100%;
+      margin: 8px auto 0;
+      text-align: left;
+    }
+
+    .camera-controls.visible {
+      display: block;
+    }
+
+    .camera-controls label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+      font-size: 15px;
+      color: #d8dee9;
+    }
+
+    .camera-controls input {
+      width: 100%;
+    }
+
+    #result {
+      margin: 18px 0 0;
+      font-size: 20px;
+      color: #00ff99;
+      white-space: pre-line;
+    }
+
+    #msg {
+      min-height: 24px;
+      margin: 10px 0 0;
+      color: #ffcc00;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>YOLO 自動偵測</h1>
+
+    <video id="camera" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <br>
+
+    <button id="toggleCamera" class="off" type="button">開啟相機</button>
+
+    <div id="zoomControls" class="camera-controls">
+      <label for="zoomSlider">
+        <span>鏡頭倍率</span>
+        <span id="zoomValue">0.5x</span>
+      </label>
+      <input id="zoomSlider" type="range" min="1" max="1" step="0.1" value="1">
+    </div>
+
+    <p id="msg">相機未開啟</p>
+    <div id="result">尚未偵測</div>
+  </main>
+
+  <script>
+    const video = document.getElementById("camera");
+    const canvas = document.getElementById("canvas");
+    const toggleCameraButton = document.getElementById("toggleCamera");
+    const msg = document.getElementById("msg");
+    const resultBox = document.getElementById("result");
+    const zoomControls = document.getElementById("zoomControls");
+    const zoomSlider = document.getElementById("zoomSlider");
+    const zoomValue = document.getElementById("zoomValue");
+
+    let stream = null;
+    let detectTimer = null;
+    let autoRestartTimer = null;
+    let isDetecting = false;
+    let currentZoom = 1.0;
+    let lastPictureRequestId = 0;
+
+    function setButtonState(isOn) {
+      toggleCameraButton.textContent = isOn ? "關閉相機" : "開啟相機";
+      toggleCameraButton.classList.toggle("on", isOn);
+      toggleCameraButton.classList.toggle("off", !isOn);
+    }
+
+    const preferredCameraZoom = 1.0;
+
+    function setZoomControlsVisible(visible) {
+      zoomControls.classList.toggle("visible", visible);
+    }
+
+    function updateZoomValue(value) {
+      currentZoom = Number(value);
+      zoomValue.textContent = `${currentZoom.toFixed(1)}x`;
+    }
+
+    async function applyCameraZoom(value) {
+      if (!stream) {
+        return;
+      }
+
+      const track = stream.getVideoTracks()[0];
+
+      if (!track) {
+        return;
+      }
+
+      try {
+        await track.applyConstraints({
+          advanced: [{ zoom: Number(value) }]
+        });
+      } catch (error) {
+        console.warn("Unable to apply camera zoom.", error);
+      }
+    }
+
+    async function setupCameraZoom(cameraStream) {
+      const track = cameraStream.getVideoTracks()[0];
+
+      if (!track || typeof track.getCapabilities !== "function") {
+        setZoomControlsVisible(false);
+        return;
+      }
+
+      const capabilities = track.getCapabilities();
+
+      if (!capabilities.zoom) {
+        setZoomControlsVisible(false);
+        return;
+      }
+
+      const minZoom = capabilities.zoom.min || 1;
+      const maxZoom = capabilities.zoom.max || minZoom;
+      const step = capabilities.zoom.step || 0.1;
+      const selectedZoom = Math.min(Math.max(currentZoom || preferredCameraZoom, minZoom), maxZoom);
+
+      zoomSlider.min = minZoom;
+      zoomSlider.max = maxZoom;
+      zoomSlider.step = step;
+      zoomSlider.value = selectedZoom;
+      updateZoomValue(selectedZoom);
+      setZoomControlsVisible(true);
+      await applyCameraZoom(selectedZoom);
+    }
+
+    async function openPreferredBackCamera() {
+      return navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+    }
+
+    async function startCamera() {
+      try {
+        if (autoRestartTimer) {
+          window.clearTimeout(autoRestartTimer);
+          autoRestartTimer = null;
+        }
+
+        if (stream) {
+          return;
+        }
+
+        stream = await openPreferredBackCamera();
+        await setupCameraZoom(stream);
+
+        video.srcObject = stream;
+        setButtonState(true);
+        msg.textContent = "相機已開啟，每 1 秒自動偵測";
+
+        await captureAndDetect();
+        detectTimer = window.setInterval(captureAndDetect, 100);
+      } catch (error) {
+        msg.textContent = "無法開啟相機，請確認瀏覽器權限與 HTTPS 設定";
+        console.error(error);
+      }
+    }
+
+    function stopCamera({ cancelAutoRestart = true } = {}) {
+      if (cancelAutoRestart && autoRestartTimer) {
+        window.clearTimeout(autoRestartTimer);
+        autoRestartTimer = null;
+      }
+
+      if (detectTimer) {
+        window.clearInterval(detectTimer);
+        detectTimer = null;
+      }
+
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+      }
+
+      video.srcObject = null;
+      setButtonState(false);
+      setZoomControlsVisible(false);
+      msg.textContent = "相機已關閉";
+    }
+
+    function pauseCameraAfterDetection() {
+      stopCamera({ cancelAutoRestart: false });
+      msg.textContent = "偵測到物品，鏡頭暫停 1.5 秒";
+
+      autoRestartTimer = window.setTimeout(() => {
+        autoRestartTimer = null;
+        startCamera();
+      }, 3000);
+    }
+
+    async function captureAndDetect() {
+      if (!stream || isDetecting || video.videoWidth === 0 || video.videoHeight === 0) {
+        return;
+      }
+
+      isDetecting = true;
+      resultBox.textContent = "偵測中...";
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      canvas.toBlob(async function(blob) {
+        const formData = new FormData();
+        formData.append("image", blob, "capture.jpg");
+
+        try {
+          const response = await fetch("/api/detect", {
+            method: "POST",
+            body: formData
+          });
+
+          const data = await response.json();
+
+          if (!data.success) {
+            resultBox.textContent = "偵測失敗：" + data.error;
+            return;
+          }
+
+          if (data.detections.length === 0) {
+            resultBox.textContent = data.message;
+            return;
+          }
+
+          const sampleText = data.sample && data.sample.data ? `\n輸出：${data.sample.data}` : "";
+          resultBox.textContent =
+            `主要結果：${data.main_result}\n信心分數：${data.confidence}${sampleText}`;
+          pauseCameraAfterDetection();
+        } catch (error) {
+          resultBox.textContent = "送出圖片或解析結果時發生錯誤";
+          console.error(error);
+        } finally {
+          isDetecting = false;
+        }
+      }, "image/jpeg", 0.9);
+    }
+
+    async function checkRemotePictureRequest() {
+      try {
+        const response = await fetch("/api/picture-request", { cache: "no-store" });
+        const data = await response.json();
+
+        if (!data.success || data.request_id <= lastPictureRequestId) {
+          return;
+        }
+
+        lastPictureRequestId = data.request_id;
+        await captureAndDetect();
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    toggleCameraButton.addEventListener("click", () => {
+      if (stream) {
+        stopCamera();
+      } else {
+        startCamera();
+      }
+    });
+    zoomSlider.addEventListener("input", () => {
+      updateZoomValue(zoomSlider.value);
+      applyCameraZoom(zoomSlider.value);
+    });
+    window.setInterval(checkRemotePictureRequest, 500);
+  </script>
+</body>
+</html>

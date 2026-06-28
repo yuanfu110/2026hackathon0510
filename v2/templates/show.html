@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>當前判斷結果</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, "Microsoft JhengHei", sans-serif;
+      background: #0f1115;
+      color: #f6f8fb;
+    }
+
+    main {
+      width: min(720px, 100%);
+      margin: 0 auto;
+      padding: 28px 18px;
+    }
+
+    h1 {
+      margin: 0 0 18px;
+      font-size: 28px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .result {
+      display: grid;
+      gap: 14px;
+      padding: 22px;
+      border: 1px solid #2c3440;
+      border-radius: 8px;
+      background: #171b22;
+    }
+
+    .primary {
+      min-height: 112px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #0b0d11;
+      color: #23d18b;
+      font-size: clamp(48px, 18vw, 128px);
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .empty {
+      color: #8b96a7;
+      font-size: 32px;
+    }
+
+    dl {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 10px 14px;
+      margin: 0;
+      text-align: left;
+      line-height: 1.5;
+    }
+
+    dt {
+      color: #9aa5b5;
+    }
+
+    dd {
+      margin: 0;
+      color: #f6f8fb;
+      word-break: break-word;
+    }
+
+    .status {
+      margin-top: 14px;
+      color: #facc15;
+      text-align: center;
+      min-height: 24px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>當前判斷結果</h1>
+
+    <section class="result" aria-live="polite">
+      <div id="output" class="primary empty">--</div>
+      <dl>
+        <dt>主要結果</dt>
+        <dd id="mainResult">尚未偵測</dd>
+        <dt>信心分數</dt>
+        <dd id="confidence">--</dd>
+        <dt>狀態</dt>
+        <dd id="message">讀取中</dd>
+        <dt>更新時間</dt>
+        <dd id="updatedAt">--</dd>
+      </dl>
+    </section>
+
+    <p id="status" class="status"></p>
+  </main>
+
+  <script>
+    const output = document.getElementById("output");
+    const mainResult = document.getElementById("mainResult");
+    const confidence = document.getElementById("confidence");
+    const message = document.getElementById("message");
+    const updatedAt = document.getElementById("updatedAt");
+    const status = document.getElementById("status");
+
+    function formatTime(value) {
+      if (!value) {
+        return "--";
+      }
+
+      const date = new Date(value);
+
+      if (Number.isNaN(date.getTime())) {
+        return value;
+      }
+
+      return date.toLocaleString("zh-TW", {
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+    }
+
+    function renderResult(data) {
+      const currentOutput = data.data || "--";
+      output.textContent = currentOutput;
+      output.classList.toggle("empty", !data.data);
+
+      mainResult.textContent = data.main_result || "尚未偵測";
+      confidence.textContent = typeof data.confidence === "number" ? data.confidence : "--";
+      message.textContent = data.message || "--";
+      updatedAt.textContent = formatTime(data.updated_at);
+      status.textContent = "";
+    }
+
+    async function refreshResult() {
+      try {
+        const response = await fetch("/api/sample-state", { cache: "no-store" });
+        const data = await response.json();
+        renderResult(data);
+      } catch (error) {
+        status.textContent = "無法讀取目前判斷結果";
+        console.error(error);
+      }
+    }
+
+    function startPollingFallback() {
+      refreshResult();
+      window.setInterval(refreshResult, 1000);
+    }
+
+    if (window.EventSource) {
+      const source = new EventSource("/sample-stream");
+
+      source.onmessage = (event) => {
+        renderResult(JSON.parse(event.data));
+      };
+
+      source.onerror = () => {
+        status.textContent = "即時連線中斷，改用一般更新";
+        source.close();
+        startPollingFallback();
+      };
+    } else {
+      startPollingFallback();
+    }
+  </script>
+</body>
+</html>

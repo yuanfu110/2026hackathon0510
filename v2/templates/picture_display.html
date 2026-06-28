@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>遠端照片顯示</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, "Microsoft JhengHei", sans-serif;
+      background: #101214;
+      color: #f5f7fa;
+      text-align: center;
+    }
+
+    main {
+      width: min(720px, 100%);
+      margin: 0 auto;
+      padding: 18px 14px 28px;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 26px;
+    }
+
+    #latestImage {
+      display: none;
+      width: min(78vw, 500px);
+      max-width: 100%;
+      aspect-ratio: 3 / 5;
+      border: 1px solid #2b3036;
+      border-radius: 8px;
+      background: #050607;
+      clip-path: inset(0 0 0 100px);
+      object-fit: cover;
+    }
+
+    #message {
+      min-height: 28px;
+      margin: 14px 0 0;
+      color: #facc15;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>遠端照片顯示</h1>
+
+    <img id="latestImage" alt="最新照片">
+    <p id="message">等待最新照片</p>
+  </main>
+
+  <script>
+    const latestImage = document.getElementById("latestImage");
+    const message = document.getElementById("message");
+
+    let latestUpdatedAt = "";
+
+    async function refreshLatestPicture() {
+      try {
+        const response = await fetch("/api/latest-picture", { cache: "no-store" });
+        const data = await response.json();
+
+        if (!data.success || !data.has_image) {
+          message.textContent = "等待最新照片";
+          return;
+        }
+
+        if (data.updated_at === latestUpdatedAt) {
+          return;
+        }
+
+        latestUpdatedAt = data.updated_at;
+        latestImage.src = `${data.image_url}?t=${encodeURIComponent(data.updated_at)}`;
+        latestImage.style.display = "inline-block";
+
+        const resultText = data.main_result ? `\n辨識：${data.main_result}` : "";
+        message.textContent = `最新照片：${data.updated_at}${resultText}`;
+      } catch (error) {
+        message.textContent = "讀取最新照片失敗";
+        console.error(error);
+      }
+    }
+
+    refreshLatestPicture();
+    window.setInterval(refreshLatestPicture, 1000);
+  </script>
+</body>
+</html>

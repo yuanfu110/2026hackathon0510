@@ -1,0 +1,1 @@
+{"data": "R", "main_result": "衛生紙", "confidence": 0.995, "message": "偵測完成", "detections": [{"class_id": 3, "class_name": "衛生紙", "confidence": 0.995, "box": {"x1": 1.2, "y1": 112.6, "x2": 720.0, "y2": 1279.7}}], "saved_image": "9c54f9262ebc4d28a73331e9496ab4fe.jpg", "updated_at": "2026-05-10T07:03:51.090527+00:00"}
